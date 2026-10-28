@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Local Video Player</title>
+<style>
+  :root { --bg:#0f0f12; --panel:#1a1a20; --accent:#ff4d4f; --text:#eee; --muted:#999; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:system-ui,Arial,sans-serif;
+         min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:16px; }
+  h1 { font-size:18px; margin:4px 0 12px; font-weight:600; }
+  #player { position:relative; width:100%; max-width:1000px; background:#000; border-radius:10px; overflow:hidden; }
+  video { width:100%; max-height:70vh; display:block; background:#000; }
+  #player:fullscreen, #player.pseudo-fs { position:fixed; inset:0; width:100vw; height:100vh; max-width:none; border-radius:0; background:#000; }
+  #player.pseudo-fs { z-index:9999; }
+  #player:fullscreen video, #player.pseudo-fs video { position:absolute; inset:0; width:100%; height:100%; max-height:none; object-fit:contain; }
+  #player:fullscreen #controls, #player.pseudo-fs #controls { position:absolute; left:0; right:0; bottom:0; background:linear-gradient(transparent, rgba(0,0,0,.88)); padding:36px 16px 12px; transition:opacity .3s; }
+  #player.idle #controls { opacity:0; pointer-events:none; }
+  #player.idle { cursor:none; }
+  #drop { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center;
+          justify-content:center; gap:12px; background:rgba(0,0,0,.75); text-align:center; padding:20px; }
+  #drop.hidden { display:none; }
+  #drop.over { outline:3px dashed var(--accent); outline-offset:-10px; }
+  button, select { background:#2a2a33; color:var(--text); border:0; border-radius:6px; padding:8px 12px;
+                   font-size:14px; cursor:pointer; }
+  button:hover, select:hover { background:#3a3a45; }
+  .primary { background:var(--accent); }
+  .primary:hover { background:#ff6b6d; }
+  #controls { background:var(--panel); padding:10px 12px; display:flex; flex-direction:column; gap:8px; }
+  .row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  input[type=range] { accent-color:var(--accent); cursor:pointer; }
+  #seek { flex:1; width:100%; }
+  #time { font-variant-numeric:tabular-nums; font-size:13px; color:var(--muted); min-width:110px; }
+  .grow { flex:1; }
+  .vol { display:flex; align-items:center; gap:6px; font-size:13px; color:var(--muted); }
+  .vol input { width:90px; }
+  .vol b { color:var(--text); min-width:40px; display:inline-block; font-weight:500; }
+  #toast { position:absolute; top:14px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,.75);
+           padding:6px 14px; border-radius:20px; font-size:14px; opacity:0; transition:opacity .2s; pointer-events:none; }
+  #toast.show { opacity:1; }
+  #help { max-width:1000px; width:100%; margin-top:14px; color:var(--muted); font-size:13px; line-height:1.7; }
+  kbd { background:#2a2a33; color:var(--text); padding:1px 7px; border-radius:4px; font-size:12px; }
+</style>
+<meta name="theme-color" content="#0f0f12">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+</head>
+<body>
+<h1>🎬 Local Video Player</h1>
+
+<div id="player">
+  <video id="video" playsinline></video>
+  <div id="toast"></div>
+  <div id="drop">
+    <div style="font-size:16px">Drag &amp; drop a video here</div>
+    <button class="primary" id="openBtn">Open video file</button>
+    <input type="file" id="file" accept="video/*,.mkv" hidden>
+  </div>
+
+  <div id="controls">
+    <input type="range" id="seek" min="0" max="1000" value="0" step="1">
+    <div class="row">
+      <button id="back" title="Back 10s (J)">⏪ 10</button>
+      <button id="play" class="primary" title="Play/Pause (Space / K)">▶</button>
+      <button id="fwd" title="Forward 10s (L)">10 ⏩</button>
+      <span id="time">0:00 / 0:00</span>
+      <span class="grow"></span>
+      <label class="vol">Vol <input type="range" id="vol" min="0" max="100" value="100"><b id="volVal">100%</b></label>
+      <label class="vol">Boost <input type="range" id="boost" min="100" max="500" step="10" value="100"><b id="boostVal">100%</b></label>
+    </div>
+    <div class="row">
+      <label class="vol">Speed
+        <select id="speed">
+          <option value="0.25">0.25x</option><option value="0.5">0.5x</option>
+          <option value="0.75">0.75x</option><option value="1" selected>1x (Normal)</option>
+          <option value="1.25">1.25x</option><option value="1.5">1.5x</option>
+          <option value="1.75">1.75x</option><option value="2">2x</option>
+          <option value="3">3x</option><option value="4">4x</option>
+        </select>
+      </label>
+      <span class="grow"></span>
+      <button id="shot" title="Screenshot (Ctrl+S)">📷 Screenshot</button>
+      <button id="fs" title="Fullscreen (F)">⛶ Fullscreen</button>
+      <button id="open2">📂 Open another</button>
+    </div>
+  </div>
+</div>
+
+<div id="help">
+  <kbd>Space</kbd> / <kbd>K</kbd> play-pause &nbsp;•&nbsp;
+  <kbd>←</kbd> <kbd>→</kbd> seek 5s &nbsp;•&nbsp;
+  <kbd>J</kbd> / <kbd>L</kbd> back / forward 10s &nbsp;•&nbsp;
+  <kbd>↑</kbd> <kbd>↓</kbd> volume &nbsp;•&nbsp;
+  <kbd>F</kbd> fullscreen &nbsp;•&nbsp;
+  <kbd>Ctrl</kbd>+<kbd>S</kbd> screenshot<br>
+  Volume boost goes from 100% up to 500% (use with care, loud audio may distort).
+  When volume is at 100%, pressing <kbd>↑</kbd> keeps raising the boost, and <kbd>↓</kbd> lowers the boost first.
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const video = $('video'), player = $('player'), drop = $('drop'), fileInput = $('file');
+const seek = $('seek'), playBtn = $('play'), timeEl = $('time');
+const vol = $('vol'), volVal = $('volVal'), boost = $('boost'), boostVal = $('boostVal');
+const speed = $('speed'), toastEl = $('toast');
+let fileName = 'video', objectUrl = null, seeking = false, toastTimer;
+
+/* ---------- helpers ---------- */
+function toast(msg) {
+  toastEl.textContent = msg; toastEl.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => toastEl.classList.remove('show'), 900);
+}
+function fmt(t) {
+  if (!isFinite(t)) return '0:00';
+  t = Math.floor(t);
+  const h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), s = t % 60;
+  return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s).padStart(2, '0');
+}
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+
+/* ---------- loading files ---------- */
+function loadFile(file) {
+  if (!file) return;
+  if (objectUrl) URL.revokeObjectURL(objectUrl);
+  objectUrl = URL.createObjectURL(file);
+  fileName = file.name.replace(/\.[^.]+$/, '');
+  video.src = objectUrl;
+  video.playbackRate = parseFloat(speed.value);
+  drop.classList.add('hidden');
+  document.title = file.name;
+  video.play().catch(() => {});
+}
+$('openBtn').onclick = $('open2').onclick = () => fileInput.click();
+fileInput.onchange = () => loadFile(fileInput.files[0]);
+['dragenter', 'dragover'].forEach(e => document.addEventListener(e, ev => { ev.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach(e => document.addEventListener(e, ev => { ev.preventDefault(); drop.classList.remove('over'); }));
+document.addEventListener('drop', ev => loadFile(ev.dataTransfer.files[0]));
+
+/* ---------- play / pause / seek ---------- */
+function togglePlay() {
+  if (!video.src) return;
+  if (video.paused) video.play(); else video.pause();
+}
+function skip(sec) {
+  if (!video.src) return;
+  video.currentTime = clamp(video.currentTime + sec, 0, video.duration || 0);
+  toast((sec > 0 ? '+' : '') + sec + 's');
+}
+playBtn.onclick = togglePlay;
+video.onclick = togglePlay;
+video.ondblclick = toggleFullscreen;
+$('back').onclick = () => skip(-10);
+$('fwd').onclick = () => skip(10);
+video.onplay = () => { playBtn.textContent = '⏸'; initAudio(); };
+video.onpause = () => playBtn.textContent = '▶';
+video.onloadedmetadata = () => updateTime();
+video.ontimeupdate = () => { if (!seeking) updateTime(); };
+function updateTime() {
+  const d = video.duration || 0;
+  seek.value = d ? (video.currentTime / d) * 1000 : 0;
+  timeEl.textContent = fmt(video.currentTime) + ' / ' + fmt(d);
+}
+seek.oninput = () => { seeking = true; if (video.duration) video.currentTime = (seek.value / 1000) * video.duration; timeEl.textContent = fmt(video.currentTime) + ' / ' + fmt(video.duration); };
+seek.onchange = () => { seeking = false; seek.blur(); };
+
+/* ---------- speed ---------- */
+speed.onchange = () => { video.playbackRate = parseFloat(speed.value); toast('Speed ' + speed.value + 'x'); speed.blur(); };
+
+/* ---------- volume + boost (Web Audio GainNode) ---------- */
+let audioCtx, gainNode;
+function initAudio() {
+  if (audioCtx) { if (audioCtx.state === 'suspended') audioCtx.resume(); return; }
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const src = audioCtx.createMediaElementSource(video);
+    gainNode = audioCtx.createGain();
+    src.connect(gainNode).connect(audioCtx.destination);
+    applyBoost();
+  } catch (e) { console.warn('Boost unavailable', e); }
+}
+function applyBoost() { if (gainNode) gainNode.gain.value = boost.value / 100; boostVal.textContent = boost.value + '%'; }
+function setVolume(v) {
+  v = clamp(Math.round(v), 0, 100);
+  video.volume = v / 100; vol.value = v; volVal.textContent = v + '%';
+}
+function setBoost(v) {
+  boost.value = clamp(Math.round(v / 10) * 10, 100, 500);
+  initAudio(); applyBoost();
+}
+vol.oninput = () => { setVolume(+vol.value); vol.blur(); };
+boost.oninput = () => { initAudio(); applyBoost(); toast('Boost ' + boost.value + '%'); };
+function volumeStep(dir) {
+  const step = 5 * dir;
+  if (dir > 0) {
+    if (+vol.value < 100) setVolume(+vol.value + step);
+    else setBoost(+boost.value + 10);
+  } else {
+    if (+boost.value > 100) setBoost(+boost.value - 10);
+    else setVolume(+vol.value + step);
+  }
+  const b = +boost.value;
+  toast(b > 100 ? 'Volume 100% • Boost ' + b + '%' : 'Volume ' + vol.value + '%');
+}
+
+/* ---------- fullscreen ---------- */
+let idleTimer;
+const isFs = () => !!(document.fullscreenElement || document.webkitFullscreenElement) || player.classList.contains('pseudo-fs');
+function wake() {
+  player.classList.remove('idle');
+  clearTimeout(idleTimer);
+  if (isFs() && !video.paused) idleTimer = setTimeout(() => player.classList.add('idle'), 2500);
+}
+function toggleFullscreen() {
+  if (isFs()) {
+    player.classList.remove('pseudo-fs', 'idle');
+    if (document.fullscreenElement) document.exitFullscreen();
+    else if (document.webkitFullscreenElement) document.webkitExitFullscreen();
+  } else {
+    const req = player.requestFullscreen || player.webkitRequestFullscreen;
+    if (req) {
+      const p = req.call(player);
+      if (p && p.catch) p.catch(() => player.classList.add('pseudo-fs'));
+    } else player.classList.add('pseudo-fs');
+  }
+  wake();
+}
+['mousemove', 'mousedown', 'touchstart', 'keydown'].forEach(ev => document.addEventListener(ev, wake));
+video.addEventListener('pause', wake);
+video.addEventListener('play', wake);
+document.addEventListener('fullscreenchange', wake);
+$('fs').onclick = toggleFullscreen;
+
+/* ---------- screenshot ---------- */
+function screenshot() {
+  if (!video.videoWidth) return toast('Load a video first');
+  const c = document.createElement('canvas');
+  c.width = video.videoWidth; c.height = video.videoHeight;
+  c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
+  c.toBlob(blob => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${fileName}_${fmt(video.currentTime).replace(/:/g, '-')}.png`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    toast('📷 Screenshot saved');
+  }, 'image/png');
+}
+$('shot').onclick = screenshot;
+
+/* ---------- keyboard ---------- */
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'SELECT' && e.key !== 'Escape') {
+    // let the select work normally, except for our global shortcuts with modifiers
+    if (!(e.ctrlKey && e.key.toLowerCase() === 's')) return;
+  }
+  const k = e.key.toLowerCase();
+  let handled = true;
+  if (e.ctrlKey && k === 's') screenshot();
+  else if (e.ctrlKey || e.altKey || e.metaKey) handled = false;
+  else if (k === ' ' || k === 'k') togglePlay();
+  else if (k === 'arrowleft') skip(-5);
+  else if (k === 'arrowright') skip(5);
+  else if (k === 'j') skip(-10);
+  else if (k === 'l') skip(10);
+  else if (k === 'arrowup') volumeStep(1);
+  else if (k === 'arrowdown') volumeStep(-1);
+  else if (k === 'f') toggleFullscreen();
+  else handled = false;
+  if (handled) { e.preventDefault(); if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur(); }
+});
+</script>
+<script>
+if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('sw.js').catch(function(){})})}
+</script>
+</body>
+</html>
